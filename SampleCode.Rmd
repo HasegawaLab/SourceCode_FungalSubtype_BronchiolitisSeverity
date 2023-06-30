@@ -1,0 +1,214 @@
+---
+title: "Nasopharyngeal fungal subtypes of infant bronchiolitis and disease severity risk"
+author: Ryohei Shibata, Zhaozhong Zhu, Michihito Kyo, Tadao Ooka, Robert J. Freishtat, Jonathan M. Mansbach, Marcos Pérez-Losada, Carlos A. Camargo Jr., and Kohei Hasegawa
+output: github_document
+---
+
+```{R, include = FALSE, warning = FALSE}
+knitr::opts_chunk$set(echo = FALSE, 
+                      eval = FALSE, 
+                      warning = FALSE, 
+                      message = FALSE, 
+                      comment = "",
+                      cache = FALSE) 
+```
+
+# Analytic workflow
+![](Image/Figure1.tiff)
+
+
+# Aim1
+## Endotyping
+* Fungi, DMM (k = 2 + 1 [no-fungi], n = 398)
+* Virus, Gower's (k = 7, n = 398)
+* Integrated, Gower's (k = 4, n = 398)
+* Sensitivity analysis, Gower's (k = 5, n = 398)
+
+## Fungitype
+```{R}
+set.seed(1202)
+library(DirichletMultinomial)
+EukFrac_df %>% 
+  .[!rownames(.) %in% study_id_NoFungi, ] %>% 
+  as.matrix -> EukFrac_mx
+
+# Fit the DMM model.
+lapply(1:8,
+       dmn,
+       count = EukFrac_mx,
+       verbose = TRUE) -> EukFrac_dmm
+
+dim(EukFrac_mx)
+```
+
+
+```{R} 
+# Check model fit with different number of mixture components using standard information criteria
+data.frame(k = 1:8,
+           Laplace = sapply(EukFrac_dmm, laplace),
+           AIC = sapply(EukFrac_dmm, AIC),
+           BIC = sapply(EukFrac_dmm, BIC)) %>% 
+  tbl_df %>% 
+  gather(Type, Value, -k)  -> DMM_tbl
+
+k_Best = 2
+
+DMM_tbl %>% 
+  filter(Type == "Laplace") %>% 
+  ggplot(., aes(x = k, y = Value))+
+  # geom_hline(yintercept =
+  #              DMM_tbl %>%
+  #              filter(Type == "Laplace") %>% 
+  #              filter(k == k_Best) %>% 
+  #              .$Value,
+  #            color = "lightblue", linetype = "dashed")+
+  # geom_vline(xintercept = k_Best,
+  #            color = "lightblue", linetype = "dashed")+
+  geom_path()+
+  geom_point(pch = 21, size = 2,
+             fill = "darkgrey")+
+  xlab("Number of clusters, k")+
+  ylab("Laplace approximation")+
+  theme(axis.text = element_text(size = 10),
+        axis.title = element_text(size = 10),
+        legend.text = element_text(size = 10),
+        legend.title = element_text(size = 10),
+        plot.margin = unit(c(1, 3, 1, 1),"mm")) +
+  scale_y_continuous(breaks = seq(1600, 2200, 200))+
+  scale_x_continuous(breaks=seq(0, 10, 2))
+  
+ggsave("Aim1/DMM_Fungi/Pathplot_DMM_Model.png",
+       dpi = 600,
+       plot = last_plot(),
+       h = 2.25, w = 2.75)
+```
+
+```{R}
+EukFrac_dmm[[2]] %>% 
+  mixture(., assign = TRUE) %>% 
+  data.frame(Fungitype = .) %>% 
+  rownames_to_column(., "study_id") %>% 
+  full_join(study_Library_ID_tbw %>% 
+              #filter(!study_id %in% study_id_NoBacteria) %>% 
+              select(study_id)) %>% 
+  mutate(Fungitype = if_else(is.na(Fungitype), "0", as.character(Fungitype))) %>% 
+  mutate(Fungitype = as.factor(Fungitype)) -> Fungitype_tbl
+
+summary(Fungitype_tbl)
+```
+## Virustype
+```{R}
+# Virus_RVRSV_df %>% 
+#   .[rownames(.) %in% study_id_Fungi, ] %>% 
+#   StatMatch::gower.dist(.,
+#                       rngs = NULL,
+#                       KR.corr = TRUE, # TRUE (default) the extension of the Gower's dissimilarity measure
+#                       var.weights = NULL,
+#                       robcb = NULL) %>% 
+#   as.dist -> Virus_dist
+# 
+# dim(Virus_dist)
+# 
+# Virus_RVRSV_df %>% 
+#   # .[rownames(.) %in% study_id_Fungi, ] %>% 
+#   .[rownames(.) %in% study_id_Fungi, ] %>% 
+#   rownames(.) -> names(Virus_dist)
+```
+
+
+```{R}
+set.seed(1202)
+dist <- Virus_dist
+k_max = 8
+title <- "CCP_Virus"
+path <- "CCP_Virus"
+dir.create(path)
+source("Mycobiome_CCP.R")
+
+fusion_ccp -> Virus_Fusion_ccp
+# 
+
+k_virus <- 7
+Virus_Fusion_ccp[[k_virus]][["consensusClass"]] %>%
+  data.frame(Virustype = .) %>%
+  r2c("study_id") %>%
+  mutate_all(as.factor) %>%
+  as_tibble -> Virustype_tbl
+
+clusterConsensus_tbl %>%
+  as_tibble %>%
+  mutate(cluster = as.factor(cluster)) %>%
+  filter(k %in% c(k_virus, k_virus+1, k_virus-1)) %>%
+  mutate(k = paste("k =", k)) %>%
+  ggplot(., aes(x = cluster, y = clusterConsensus))+
+  geom_bar(stat = "identity")+
+  facet_grid(~ k, scale = "free_x", space = "free_x")+
+  labs(x = "Cluster",
+       y = "Cluster consensus value")+
+  theme(axis.title = element_text(size = 14),
+        axis.text = element_text(size = 14),
+        strip.text = element_text(size = 14))
+ggsave(glue("{path}/ClusterConsensusPlot_Virus.png"),
+            dpi = 300, h = 3.25, w = 6)
+```
+
+## Mycotype
+```{R}
+Fungitype_tbl %>% 
+  inner_join(Virustype_tbl) %>% 
+  c2r("study_id") -> Mycotype_df
+
+Mycotype_df %>% 
+  StatMatch::gower.dist(.,
+                      rngs = NULL,
+                      KR.corr = TRUE, # TRUE (default) the extension of the Gower's dissimilarity measure
+                      var.weights = NULL,
+                      robcb = NULL) %>% 
+  as.dist -> Mycotype_dist
+
+Mycotype_df %>% 
+  rownames(.) -> names(Mycotype_dist)
+
+summary(Mycotype_df)
+```
+
+# Analytic workflow
+![](Image/Figure1.tiff)
+
+# 1. Clustering of individual datasetes
+```{R}
+set.seed(1202)
+dist <- Mycotype_dist
+k_max = 8
+title <- "CCP_Fusion"
+path <- "CCP_Fusion"
+dir.create(path)
+source("Mycobiome_CCP.R")
+
+fusion_ccp -> Mycotype_Fusion_ccp
+
+k_fusion <- 4
+Mycotype_Fusion_ccp[[k_fusion]][["consensusClass"]] %>% 
+  data.frame(Mycotype = .) %>% 
+  r2c("study_id") %>% 
+  mutate_all(as.factor) %>% 
+  as_tibble -> Mycotype_tbl 
+
+summary(Mycotype_tbl)
+
+clusterConsensus_tbl %>% 
+  as_tibble %>% 
+  mutate(cluster = as.factor(cluster)) %>% 
+  filter(k %in% c(k_fusion, k_fusion+1, k_fusion-1)) %>% 
+  mutate(k = paste("k =", k)) %>% 
+  ggplot(., aes(x = cluster, y = clusterConsensus))+
+  geom_bar(stat = "identity")+
+  facet_grid(~ k, scale = "free_x", space = "free_x")+
+  labs(x = "Cluster",
+       y = "Cluster consensus value")+
+  theme(axis.title = element_text(size = 14),
+        axis.text = element_text(size = 14),
+        strip.text = element_text(size = 14))
+ggsave(glue("{path}/ClusterConsensusPlot_Fusion.png"),
+            dpi = 300, h = 3.25, w = 4)
+```
