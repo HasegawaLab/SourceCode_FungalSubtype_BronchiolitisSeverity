@@ -24,11 +24,15 @@ library(DOSE)
 library(org.Hs.eg.db)
 library(GO.db)
 library(ConsensusClusterPlus)
+library(DirichletMultinomial)
 
 # epidemiology
 library("survival")
 library("gmodels")
 library("EValue")
+library(logistlogF)
+library(sandwich)
+library(lmtest)
 
 # visiualization
 library(ggrepel)
@@ -37,6 +41,8 @@ library(circlize)
 library(ggalluvial)
 library(ggfortify)
 library(GenomeInfoDb)
+library(extrafont)
+library(forestplot)
 
 # Theme
 theme_set(theme_classic())

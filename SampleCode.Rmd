@@ -11,38 +11,32 @@ knitr::opts_chunk$set(echo = FALSE,
                       message = FALSE, 
                       comment = "",
                       cache = FALSE) 
+
+source("Library.R")
+source("Function.R")
+set.seed(1202)
 ```
 
 # Analytic workflow
 ![](Image/Figure1.tiff)
 
 
-# Aim1
-## Endotyping
-* Fungi, DMM (k = 2 + 1 [no-fungi], n = 398)
-* Virus, Gower's (k = 7, n = 398)
-* Integrated, Gower's (k = 4, n = 398)
-* Sensitivity analysis, Gower's (k = 5, n = 398)
+# 1. Clustering of individual datasets
 
-## Fungitype
+## Fungus cluster
 ```{R}
-set.seed(1202)
-library(DirichletMultinomial)
+# Decide k
+# EukFrac_df: EukFrac (i.e., relative abundance) of nasopharyngeal fungi (row, sample; col, fungi)
+
 EukFrac_df %>% 
   .[!rownames(.) %in% study_id_NoFungi, ] %>% 
   as.matrix -> EukFrac_mx
 
-# Fit the DMM model.
 lapply(1:8,
        dmn,
        count = EukFrac_mx,
        verbose = TRUE) -> EukFrac_dmm
 
-dim(EukFrac_mx)
-```
-
-
-```{R} 
 # Check model fit with different number of mixture components using standard information criteria
 data.frame(k = 1:8,
            Laplace = sapply(EukFrac_dmm, laplace),
@@ -51,111 +45,66 @@ data.frame(k = 1:8,
   tbl_df %>% 
   gather(Type, Value, -k)  -> DMM_tbl
 
-k_Best = 2
-
 DMM_tbl %>% 
   filter(Type == "Laplace") %>% 
-  ggplot(., aes(x = k, y = Value))+
-  # geom_hline(yintercept =
-  #              DMM_tbl %>%
-  #              filter(Type == "Laplace") %>% 
-  #              filter(k == k_Best) %>% 
-  #              .$Value,
-  #            color = "lightblue", linetype = "dashed")+
-  # geom_vline(xintercept = k_Best,
-  #            color = "lightblue", linetype = "dashed")+
-  geom_path()+
-  geom_point(pch = 21, size = 2,
-             fill = "darkgrey")+
-  xlab("Number of clusters, k")+
-  ylab("Laplace approximation")+
-  theme(axis.text = element_text(size = 10),
-        axis.title = element_text(size = 10),
-        legend.text = element_text(size = 10),
-        legend.title = element_text(size = 10),
-        plot.margin = unit(c(1, 3, 1, 1),"mm")) +
-  scale_y_continuous(breaks = seq(1600, 2200, 200))+
-  scale_x_continuous(breaks=seq(0, 10, 2))
-  
-ggsave("Aim1/DMM_Fungi/Pathplot_DMM_Model.png",
-       dpi = 600,
-       plot = last_plot(),
-       h = 2.25, w = 2.75)
+  filter(Value == min(Value)) %>% 
+  .$k -> k_Best # k = 2
 ```
 
 ```{R}
-EukFrac_dmm[[2]] %>% 
+EukFrac_dmm[[k_Best]] %>% 
   mixture(., assign = TRUE) %>% 
-  data.frame(Fungitype = .) %>% 
+  data.frame(FungusCluster = .) %>% 
   rownames_to_column(., "study_id") %>% 
   full_join(study_Library_ID_tbw %>% 
               #filter(!study_id %in% study_id_NoBacteria) %>% 
               select(study_id)) %>% 
-  mutate(Fungitype = if_else(is.na(Fungitype), "0", as.character(Fungitype))) %>% 
-  mutate(Fungitype = as.factor(Fungitype)) -> Fungitype_tbl
-
-summary(Fungitype_tbl)
+  mutate(FungusCluster = if_else(is.na(FungusCluster), "0", as.character(FungusCluster))) %>% 
+  mutate(FungusCluster = as.factor(FungusCluster)) -> FungusCluster_tbl
 ```
-## Virustype
+## Virus cluster
 ```{R}
-# Virus_RVRSV_df %>% 
-#   .[rownames(.) %in% study_id_Fungi, ] %>% 
-#   StatMatch::gower.dist(.,
-#                       rngs = NULL,
-#                       KR.corr = TRUE, # TRUE (default) the extension of the Gower's dissimilarity measure
-#                       var.weights = NULL,
-#                       robcb = NULL) %>% 
-#   as.dist -> Virus_dist
-# 
-# dim(Virus_dist)
-# 
-# Virus_RVRSV_df %>% 
-#   # .[rownames(.) %in% study_id_Fungi, ] %>% 
-#   .[rownames(.) %in% study_id_Fungi, ] %>% 
-#   rownames(.) -> names(Virus_dist)
-```
+# Virus_RVRSV_df: Binary and genomic load data of nasopharyngeal virus (row, sample; col, virus)
+# Calculate distance
+Virus_RVRSV_df %>%
+  StatMatch::gower.dist(.,
+                      rngs = NULL,
+                      KR.corr = TRUE, # TRUE (default) the extension of the Gower's dissimilarity measure
+                      var.weights = NULL,
+                      robcb = NULL) %>%
+  as.dist -> Virus_dist
+
+Virus_RVRSV_df %>%
+  rownames(.) -> names(Virus_dist)
 
 
-```{R}
-set.seed(1202)
-dist <- Virus_dist
-k_max = 8
-title <- "CCP_Virus"
-path <- "CCP_Virus"
-dir.create(path)
-source("Mycobiome_CCP.R")
-
-fusion_ccp -> Virus_Fusion_ccp
-# 
+# Consensus clustering
+ConsensusClusterPlus(Virus_dist,
+                      maxK = 8,
+                      reps = 50,
+                      pItem = 0.8,
+                      pFeature = 1,
+                      title = "CCP_Virus",
+                      writeTable = TRUE,
+                      clusterAlg = "pam",
+                      plot = "png",
+                      seed = 1202) -> Virus_Fusion_ccp
 
 k_virus <- 7
+
 Virus_Fusion_ccp[[k_virus]][["consensusClass"]] %>%
-  data.frame(Virustype = .) %>%
+  data.frame(VirusCluster = .) %>%
   r2c("study_id") %>%
   mutate_all(as.factor) %>%
-  as_tibble -> Virustype_tbl
-
-clusterConsensus_tbl %>%
-  as_tibble %>%
-  mutate(cluster = as.factor(cluster)) %>%
-  filter(k %in% c(k_virus, k_virus+1, k_virus-1)) %>%
-  mutate(k = paste("k =", k)) %>%
-  ggplot(., aes(x = cluster, y = clusterConsensus))+
-  geom_bar(stat = "identity")+
-  facet_grid(~ k, scale = "free_x", space = "free_x")+
-  labs(x = "Cluster",
-       y = "Cluster consensus value")+
-  theme(axis.title = element_text(size = 14),
-        axis.text = element_text(size = 14),
-        strip.text = element_text(size = 14))
-ggsave(glue("{path}/ClusterConsensusPlot_Virus.png"),
-            dpi = 300, h = 3.25, w = 6)
+  as_tibble -> VirusCluster_tbl
 ```
 
+# 2. Clustering of the fused matrix
 ## Mycotype
 ```{R}
-Fungitype_tbl %>% 
-  inner_join(Virustype_tbl) %>% 
+# Calculate distance
+FungusCluster_tbl %>% 
+  inner_join(VirusCluster_tbl) %>% 
   c2r("study_id") -> Mycotype_df
 
 Mycotype_df %>% 
@@ -169,46 +118,1116 @@ Mycotype_df %>%
 Mycotype_df %>% 
   rownames(.) -> names(Mycotype_dist)
 
-summary(Mycotype_df)
-```
-
-# Analytic workflow
-![](Image/Figure1.tiff)
-
-# 1. Clustering of individual datasetes
-```{R}
-set.seed(1202)
-dist <- Mycotype_dist
-k_max = 8
-title <- "CCP_Fusion"
-path <- "CCP_Fusion"
-dir.create(path)
-source("Mycobiome_CCP.R")
-
-fusion_ccp -> Mycotype_Fusion_ccp
+# Consensus clustering
+ConsensusClusterPlus(Mycotype_dist,
+                      maxK = 8,
+                      reps = 50, 
+                      pItem = 0.8,
+                      pFeature = 1,
+                      title = "CCP_Fusion",
+                      writeTable = TRUE,
+                      clusterAlg = "pam",
+                      plot = "png",
+                      seed = 1202) -> Mycotype_Fusion_ccp
 
 k_fusion <- 4
+
 Mycotype_Fusion_ccp[[k_fusion]][["consensusClass"]] %>% 
   data.frame(Mycotype = .) %>% 
   r2c("study_id") %>% 
   mutate_all(as.factor) %>% 
   as_tibble -> Mycotype_tbl 
+```
 
-summary(Mycotype_tbl)
+# 3. Interpretation of mycotypes
+## Shannon index
+```{R}
+# EukFrac_tbl, EukFrac of nasopharyngeal fungi (long and tidy data)
+EukFrac_tbl %>% 
+  group_by(study_id) %>% 
+  summarise(Shannon = vegan::diversity(Value, index = "shannon")) -> Shannon_Fungi_tbl
 
-clusterConsensus_tbl %>% 
-  as_tibble %>% 
-  mutate(cluster = as.factor(cluster)) %>% 
-  filter(k %in% c(k_fusion, k_fusion+1, k_fusion-1)) %>% 
-  mutate(k = paste("k =", k)) %>% 
-  ggplot(., aes(x = cluster, y = clusterConsensus))+
-  geom_bar(stat = "identity")+
-  facet_grid(~ k, scale = "free_x", space = "free_x")+
-  labs(x = "Cluster",
-       y = "Cluster consensus value")+
+Shannon_Fungi_tbl %>% 
+  inner_join(Mycotype_tbl) %>% 
+  rstatix::kruskal_test(Shannon ~ Mycotype) %>% 
+  mutate(p = format_pvalue_lancet(p)) %>% 
+  .$p -> Pvalue_Shannon_KW
+
+Shannon_Fungi_tbl %>% 
+  .$Shannon %>% 
+  max -> shannon_max
+Shannon_Fungi_tbl
+Alpha_Fungi_tbw %>% 
+  inner_join(Mycotype_tbl) %>% 
+  mutate(Pvalue = glue("p{Pvalue_Shannon_KW}")) %>% 
+  ggplot(., aes(x = Mycotype, y = Shannon, color = Mycotype))+
+  ggbeeswarm::geom_quasirandom(size = 0.5)+
+  geom_boxplot(alpha = 0, color = "darkgray", size = 0.375)+
+  geom_text(aes(label = Pvalue),
+            x = "D",
+            y = shannon_max,
+            size = 3.5,
+            hjust   = 0.6,
+            color = "black")+
+  labs(y = "Shannon index") +
+  guides(color = FALSE)+
+  scale_color_manual(values = Colors_Mycotype[1:k_fusion])+
+  ggtitle("")+
+  theme(axis.text = element_text(size = 10),
+        axis.title = element_text(size = 10),
+        legend.text = element_text(size = 10),
+        legend.title = element_text(size = 10),
+        plot.margin = unit(c(1, 3, 1, 1),"mm"))
+```
+
+## EukFrac
+```{R}
+# EukFrac_tbl, EukFrac of nasopharyngeal fungi (long and tidy data)
+
+EukFrac_tbl %>% 
+  inner_join(Mycotype_tbl) %>% 
+  group_by(Variable) %>% 
+  # filter_mb(0.15) %>% 
+  rstatix::kruskal_test(Value ~ Mycotype) %>%
+  arrange(p) %>% 
+  mutate(FDR = qvalue_r(p)) %>% 
+  filter(FDR < 0.05) %>% 
+  mutate(FDR = format_pvalue_lancet(FDR)) %>% 
+  mutate(FDR = glue("FDR{FDR}")) %>% 
+  select(Variable, FDR) %>% 
+  mutate(Position = if_else(Variable == "Malassezia restricta",
+                            "D", "D")) %>% 
+  mutate(Height = if_else(Variable == "Malassezia restricta",
+                            110, 110))-> EukFrac_Mycotype_SD_tbl
+
+EukFrac_Mycotype_SD_tbl %>% 
+  .$Variable -> Fungi_Mycotype
+
+EukFrac_tbl %>% 
+  inner_join(Mycotype_tbl) %>% 
+  inner_join(EukFrac_Mycotype_SD_tbl) %>% 
+  mutate(Variable = fct_relevel(Variable, "Malassezia restricta")) %>% 
+  mutate(Variable = fct_recode(Variable, 
+                               "\nMalassezia restricta" = "Malassezia restricta",
+                               "\nMalassezia globosa" = "Malassezia globosa")) %>% 
+  ggplot(., aes(x = Mycotype, y = Value, color = Mycotype))+
+  ggbeeswarm::geom_quasirandom(size = 0.5)+
+  geom_boxplot(alpha = 0, color = "darkgray", size = 0.375)+
+    geom_text(aes(label = FDR,
+                  x = Position,
+                  y = Height),
+            size = 3.5,
+            hjust   = 0.8,
+            color = "black")+
+  facet_wrap(~ Variable, nrow = 1) +
+  labs(y = "EukFrac, %") +
+  guides(color = FALSE)+
+  scale_color_manual(values = Colors_Endotype[1:5])+
+  scale_y_continuous(breaks = c(0, 25, 50, 75, 100))+
+  theme(axis.text = element_text(size = 10),
+        axis.title = element_text(size = 10),
+        legend.text = element_text(size = 10),
+        legend.title = element_text(size = 10),
+        strip.text = element_text(size = 10),
+        plot.margin = unit(c(1, 3, 1, 1),"mm")) 
+```
+
+## RPKS
+```{R}
+# EukDetect_RPKS_tbl, RPKS of nasopharyngeal fungi (long and tidy data)
+EukDetect_RPKS_tbl %>% 
+  inner_join(Mycotype_tbl) %>% 
+  group_by(Variable) %>% 
+  rstatix::kruskal_test(Value ~ Mycotype) %>%
+  arrange(p) %>% 
+  mutate(FDR = qvalue_r(p)) %>% 
+  filter(FDR < 0.05) %>% 
+  mutate(FDR = format_pvalue_lancet(FDR)) %>% 
+  mutate(FDR = glue("FDR{FDR}")) %>% 
+  select(Variable, FDR) %>% 
+  mutate(Position = if_else(Variable == "Malassezia restricta",
+                            "D", "D")) %>% 
+  mutate(Height = if_else(Variable == "Malassezia restricta",
+                            16, 1.3)) %>% 
+  mutate(Variable = fct_recode(Variable, 
+                               "\nMalassezia restricta" = "Malassezia restricta",
+                               "\nMalassezia globosa" = "Malassezia globosa")) -> RPKS_Mycotype_SD_tbl
+
+EukFrac_Mycotype_SD_tbl %>% 
+  .$Variable -> Fungi_Mycotype
+
+EukDetect_RPKS_tbl %>% 
+  filter(grepl("restricta|globosa", Variable)) %>% 
+  spread(Variable, Value) %>% 
+  mutate(`Malassezia restricta\n(RPKS<1)` = if_else(`Malassezia restricta` > 1, NA, `Malassezia restricta`)) %>% 
+  rename(`\nMalassezia restricta` = `Malassezia restricta`) %>% 
+  rename(`\nMalassezia globosa` = `Malassezia globosa`) %>% 
+  gather(Variable, Value, -study_id) %>% 
+  inner_join(Mycotype_tbl) %>% 
+  left_join(RPKS_Mycotype_SD_tbl) %>% 
+  mutate(Variable = fct_relevel(Variable, "\nMalassezia restricta", "Malassezia restricta\n(RPKS<1)")) %>% 
+  
+  ggplot(., aes(x = Mycotype, y = Value, color = Mycotype))+
+  ggbeeswarm::geom_quasirandom(size = 0.5)+
+  geom_boxplot(alpha = 0, color = "darkgray", size = 0.375)+
+    geom_text(aes(label = FDR,
+                  x = Position,
+                  y = Height),
+            size = 3.5,
+            hjust   = 0.8,
+            color = "black")+
+  facet_wrap(~ Variable, nrow = 1, scale = "free_y") +
+  labs(y = "RPKS") +
+  guides(color = FALSE)+
+  scale_color_manual(values = Colors_Endotype[1:4])+
+  # scale_y_continuous(# limits = c(0, 100),
+  #                    breaks = c(0, 25, 50, 75, 100))+
+  theme(axis.text = element_text(size = 10),
+        axis.title = element_text(size = 10),
+        legend.text = element_text(size = 10),
+        legend.title = element_text(size = 10),
+        strip.text = element_text(size = 10),
+        plot.margin = unit(c(1, 3, 1, 1),"mm"))
+```
+
+## Circular plot
+```{R}
+# Clinicaldata_tbw, clinical data shonw in Table (row, patients; col, variables)
+
+Mycotype_tbl %>% 
+  inner_join(Clinicaldata_tbw) %>%
+  select(study_id,
+         Mycotype,
+         Age_mo,
+         intake_sex,
+         premature37,
+         RSV,
+         RV,
+         antibiotics_life, 
+         corticosteroids_life) %>% 
+  inner_join(Virus_tbw %>% 
+           select(study_id, RSV_CT)) %>% 
+  c2r("study_id") %>% 
+  mutate(intake_sex = if_else(intake_sex == "Male", 1, 0)) %>% # Male = 1, Female = 2
+  mutate_if(names(.) != "Mycotype", funs(as.character)) %>% 
+  mutate_if(names(.) != "Mycotype", funs(as.numeric))  %>% 
+  r2c("study_id") -> Clinicaldata_Circular_tbw 
+
+
+Clinicaldata_Circular_tbw %>% 
+  gather(Variable, Value, -study_id, -Mycotype) %>% 
+  group_by(Variable) %>% 
+  summarise(Sum = sum(Value, na.rm = TRUE)) -> FactorsCB_Sum_tbl
+
+Clinicaldata_Circular_tbw %>%
+  group_by(Mycotype, study_id) %>%
+  summarise() %>%
+  group_by(Mycotype) %>%
+  summarise(Count =  n()) %>%
+  ungroup -> Mycotype_Sum_tbl
+
+Clinicaldata_Circular_tbw %>% 
+  gather(Variable, Value, -study_id, -Mycotype) %>% 
+  inner_join(FactorsCB_Sum_tbl) %>% 
+  inner_join(Mycotype_Sum_tbl) %>% 
+  mutate(Value = Value/Sum/Count) %>% 
+  select(-Sum, -Count) %>% 
+  group_by(Mycotype, Variable) %>% 
+  summarise(Total = sum(Value, na.rm = TRUE)) %>% 
+  mutate(Variable = fct_recode(Variable,
+                               "Age" = "Age_mo",
+                               "Male sex" = "intake_sex",
+                               "Prematurity\n<37 weeks" = "premature37",
+                               "RSV" = "RSV",
+                               "RV" = "RV",
+                               "Lifetime\nantibiotics\nuse" = "antibiotics_life",
+                               "Cortico-\nsteroids\nuse*" = "corticosteroids_life")) %>% 
+  spread(Variable, Total) %>%
+  ungroup %>% 
+  .[k_fusion:1, ] %>% 
+  mutate(Mycotype = paste("Mycotype", Mycotype, sep = "\n")) %>% 
+  c2r("Mycotype") %>% 
+  as.matrix   %>% 
+  .[, c("Age",
+        "Male sex",
+        "Prematurity\n<37 weeks",
+        "Lifetime\nantibiotics\nuse",
+        "Cortico-\nsteroids\nuse*",
+        "RSV",
+        "RV")] -> ChordDiagram_mx
+```
+
+```{R}
+# Creat chord diagrams
+c(Colors_Endotype[k_fusion:1] %>% 
+    setNames(rownames(ChordDiagram_mx)),
+  rep("#d8d8d8", ncol(ChordDiagram_mx)) %>% 
+    setNames(colnames(ChordDiagram_mx))) -> Colors_Grid
+
+
+future_map(Mycotype_Target, function(Mycotype){
+  
+  Mycotype_target <- paste0("Mycotype\n", Mycotype)
+  Mycotype_reference <- paste0("Mycotype\n", Mycotype_Reference)
+  
+  Colors_Grid -> colors
+  ChordDiagram_mx -> mx
+  
+  colors[!names(colors) %in% c(Mycotype_target,
+                               Mycotype_reference)] <- "#d8d8d8"
+
+png(glue("Image/Circular_Mycotype{Mycotype}.png"),
+    res = 300,
+    width = 5800/2,
+    height = 5600/2) 
+par(cex = 4.2/2)   
+circos.par(start.degree = 270,
+           circle.margin = 0.1)
+
+chordDiagram(mx,
+             annotationTrack = c("grid"),
+             transparency = 0.4,
+             preAllocateTracks = 1,
+             grid.col = colors) 
+
+# we go back to the first track and customize sector labels
+circos.track(track.index = 1,
+             panel.fun = function(x, y) {
+               circos.text(CELL_META$xcenter,
+                           CELL_META$ylim[1],
+                           CELL_META$sector.index,
+                           facing = "clockwise",
+                           niceFacing = TRUE,
+                           adj = c(0, 0.5))
+             },
+             bg.border = NA) # here set bg.border to NA is important
+dev.off()
+circos.clear()
+})
+```
+
+# 4. Clinical significance of mycotypes
+## Logistic regression + Firth
+```{R}
+# Clinicaldata_tbw, clinical data shonw in Table (row, patients; col, variables)
+Clinicaldata_tbw %>% 
+   select(study_id, 
+          Age_mo, intake_sex, premature37,
+          intake_smoke,
+          RSV,
+          corticosteroids_recent,
+          CPAPintubate) %>% 
+  inner_join(Mycotype_tbl) %>% 
+  mutate(Age_mo = case_when(Age_mo < 2 ~ "Low",
+                               Age_mo >= 5 ~ "High",
+                               Age_mo >= 2 & Age_mo < 5 ~ "Intermediate")) %>%
+  mutate(CPAPintubate = as.factor(CPAPintubate)) %>% 
+  
+  mutate(CPAPintubate = relevel(CPAPintubate, ref = "0")) %>% 
+  mutate(Age_mo = as.factor(Age_mo)) %>% 
+  mutate(Age_mo = relevel(Age_mo, ref = "Low")) -> Clinicaldata_Model_tbw  
+```
+
+```{R}
+list(Unadjusted = as.formula("CPAPintubate ~ Mycotype"),
+     `Adjusted†` = as.formula("CPAPintubate ~ Mycotype + Age_mo + corticosteroids_recent")) -> Formula_list 
+
+future_imap(Formula_list, function(formula, model){
+  Clinicaldata_Model2_tbw -> clinicaldata_tbw
+  
+  logistf::logistf(formula,
+      data = clinicaldata_tbw) -> fit
+  
+  data.frame(estimate = exp(fit$coefficients),
+             conf.low = exp(fit$ci.lower),
+             conf.high = exp(fit$ci.upper),
+             p.value = fit$prob) %>% 
+  r2c("term") %>% 
+  mutate(Model = model) %>% 
+  filter(grepl("Mycotype", term)) -> fit_tbw
+  
+  future_map(fit_tbw$term, function(i){
+    fit_tbw %>% 
+      filter(term == i) -> fit_i_term
+    
+    EValue::evalues.RR(fit_i_term$estimate, # when event is rare, we can use RR instead of OR
+                     lo = fit_i_term$conf.low,
+                     hi = fit_i_term$conf.high,
+                     true = 1) %>% 
+    as.data.frame -> evalue_df
+    
+    evalue_df[is.na(evalue_df)] <- ""
+    
+    "%.2f" -> digits
+    
+    evalue_df %>% 
+      r2c("Variable") %>% 
+      filter(Variable == "E-values") %>% 
+      mutate_if(is.numeric, funs(sprintf(digits, .))) %>% 
+      mutate(`E-value` = glue("{point} ({lower}{upper})")) %>% 
+      .$`E-value` -> evalue
+    
+    fit_i_term %>% 
+      mutate(`Odds ratio\n(95% CI)` =
+               glue("{sprintf(digits, estimate)} ({sprintf(digits, conf.low)}–{sprintf(digits, conf.high)})")) %>% 
+      mutate(`E-value` = if_else(p.value < 0.05, evalue, "-"))
+    }) %>% 
+    do.call(bind_rows, .)
+}) %>% 
+    do.call(bind_rows, .) %>% 
+  mutate(term = gsub("Mycotype", "Mycotype ", term)) 
+```
+
+```{R}
+Mycotype_Reference <- "A"
+Mycotype_Target <- c("B", "C", "D")
+Mycotype_Interest <- "C"
+```
+
+# 5. Biological characteristics of mycotypes
+## Bacterial composition
+```{R}
+# Bacteria_tbl, relative abundance of nasopharyngeal bacteria (long and tidy data)
+Bacteria_tbl %>% 
+  inner_join(Mycotype_tbl) %>% 
+  group_by(Variable) %>% 
+  rstatix::wilcox_test(Value ~ Mycotype,
+                       ref.group = Mycotype_Reference) -> Bacteria_Mycotype_Wilcox_tbw
+
+future_map(Mycotype_Target, function(x){
+  Bacteria_Mycotype_Wilcox_tbw %>% 
+    filter(group2 == x) %>% 
+    mutate(FDR = qvalue_r(p)) %>% 
+    filter(FDR < 0.05) %>% 
+    select(Variable, group2, FDR)}) %>% 
+  do.call(bind_rows, .) -> Bacteria_Mycotype_Wilcox_SD_tbw
+
+Bacteria_tbl %>% 
+  mutate(Value = Value/100) %>% 
+  group_by(Variable) %>% 
+  summarise(Value = mean(Value)) %>% 
+  arrange(-Value) %>% 
+  .[1:25, ] -> Bacteria_Mean25_tbw
+
+Bacteria_Mean25_tbw %>% 
+  c2r("Variable") -> Bacteria_Mean25_df
+
+Bacteria_tbl %>% 
+  mutate(Value = Value/100) %>% 
+  group_by(Variable) %>% 
+  inner_join(Mycotype_tbl) %>% 
+  group_by(Mycotype, Variable) %>% 
+  summarise(Value = mean(Value)) %>% 
+  mutate(Mycotype = paste("Mycotype", Mycotype)) %>% 
+  mutate(Value = log(Value, 10)) %>% 
+  spread(Mycotype, Value) %>% 
+  inner_join(Bacteria_Mean25_tbw %>% 
+               mutate(Value = log(Value, 10))) %>% 
+  rename(Overall = Value) %>% 
+  arrange(-Overall) %>% 
+  select(Overall, everything()) %>% 
+  c2r("Variable") -> Bacteria_Mean25_Mycotype_df
+
+Bacteria_Mean25_Mycotype_df[sapply(Bacteria_Mean25_Mycotype_df,
+                                   simplify = 'matrix',
+                                   is.infinite)] <- NA
+
+Bacteria_Mycotype_Wilcox_SD_tbw %>% 
+  mutate(group2 = paste("Mycotype", group2)) %>% 
+  mutate(FDR = add_sd(FDR)) %>% 
+  spread(group2, FDR) %>% 
+  mutate(`Mycotype B` = NA) %>% 
+  mutate(`Mycotype A` = NA) %>% 
+  mutate(`Overall` = NA) %>% 
+  right_join(Bacteria_Mean25_tbw) %>% 
+  select(Variable,
+         Overall,
+         `Mycotype A`, `Mycotype B`, `Mycotype C`, `Mycotype D`) %>% 
+  c2r("Variable") %>% 
+  .[rownames(Bacteria_Mean25_Mycotype_df), ] -> Bacteria_Mean25_Wilcox_SD_df
+  
+Bacteria_Mean25_Wilcox_SD_df[is.na(Bacteria_Mean25_Wilcox_SD_df)] <- ""
+
+
+Bacteria_tbl %>% 
+  rename(Variable_Species = Variable,
+         Value_Species = Value) %>% 
+  inner_join(Clinicaldata_Model3_tbw %>% 
+               select(study_id, CPAPintubate, LOS2dys) %>% 
+               gather(Variable_Outcome, Value_Outcome, CPAPintubate, LOS2dys)) %>% 
+  mutate(Value_Outcome = as.numeric(Value_Outcome)) %>% 
+  group_by(Variable_Species, Variable_Outcome) %>% 
+  rstatix::cor_test(Value_Species, Value_Outcome,
+                    method = "spearman") -> Bacteria_Outcome_Spearman_tbw
+
+Bacteria_Outcome_Spearman_tbw %>% 
+  group_by(Variable_Outcome) %>% 
+  mutate(FDR = qvalue_r(p)) %>% 
+  filter(FDR < 0.05) %>% 
+  filter(Variable_Species %in% rownames(Bacteria_Mean25_df)) 
+
+Bacteria_Mean25_Mycotype_df %>% 
+  rownames %>% 
+  data.frame(Variable = .) %>% 
+  mutate(Phylum = case_when(grepl("Cutibacterium", Variable) ~ "Actinomycetota",
+                           grepl("Moraxella|Haemophilus", Variable) ~ "Proteobacteria",
+                           grepl("Streptococcus|Gemella|Staphylococcus|Agitococcus", Variable) ~ "Bacillota",
+                           grepl("Prevotella", Variable) ~ "Bacteroidota",
+                           grepl("Neisseria|Delftia", Variable) ~ "Proteobacteria",
+                           grepl("Veillonella", Variable) ~ "Bacillota",
+                           grepl("Ureaplasma|Mycoplasma", Variable) ~ "Mycoplasmatota")) -> Species_Phylum_tbw
+
+Bacteria_Outcome_Spearman_tbw %>% 
+  select(Variable_Species, Variable_Outcome, cor) %>% 
+  spread(Variable_Outcome, cor) %>% 
+  rename(`PPV use` = CPAPintubate,
+         `LOS (≥2 days)` = LOS2dys) %>% 
+  rename(Variable = Variable_Species) %>% 
+  inner_join(Species_Phylum_tbw) %>% 
+  c2r("Variable") -> annotation_row_df
+
+Alpha_Bacteria_tbw %>% 
+  select(-Observed) %>% 
+  mutate(Mycotype = "Overall") %>% 
+  group_by(Mycotype) %>% 
+  summarise(Shannon = mean(Shannon)) -> Shannon_Mean_Overall_tbw
+
+Alpha_Bacteria_tbw %>% 
+  inner_join(Mycotype_tbl) %>% 
+  rstatix::wilcox_test(Shannon ~ Mycotype,
+                       ref.group = "A")
+
+Alpha_Bacteria_tbw %>% 
+  select(-Observed) %>% 
+  inner_join(Mycotype_tbl) %>% 
+  group_by(Mycotype) %>% 
+  summarise(Shannon = mean(Shannon)) %>% 
+  mutate(Mycotype = glue("Mycotype {Mycotype}")) %>% 
+  bind_rows(., Shannon_Mean_Overall_tbw) %>% 
+  rename(`Shannon index` = Shannon) %>% 
+  c2r("Mycotype") -> annotation_col_df
+```
+
+```{R}
+pheatmap::pheatmap(Bacteria_Mean25_Mycotype_df,
+                   display_numbers = Bacteria_Mean25_Wilcox_SD_df,
+                   annotation_row = annotation_row_df,
+                   annotation_col = annotation_col_df,
+                    cluster_cols = FALSE,
+                   cluster_rows = FALSE,
+                   gaps_col = c(1, 2),
+                   fontsize_number = 12,
+                   color = colorRampPalette(c("gray20",
+                                              "white",
+                                               "orangered"))(100),
+                   annotation_colors = list(`PPV use` = colorRampPalette(c("deepskyblue1",
+                                                                           "white",
+                                                                           "hotpink1"))(100),
+                                            `LOS (≥2 days)` = colorRampPalette(c("deepskyblue3",
+                                                                           "white",
+                                                                           "hotpink3"))(100)),
+
+                   file = "Image/Heatmap_Mycorype_Bacteria.png",
+                   res = 300, width = 5.475, height = 5)
+```
+
+## Microbial functions
+```{R}
+# PathAbundance_RA_tbl: Relative abundance of microbial functions (long and tidy data)
+PathAbundance_RA_tbl %>% 
+  group_by(Variable) %>% 
+  filter(!Variable %in%  c("UNINTEGRATED", "UNMAPPED")) %>% 
+  summarise(Value = mean(Value)) %>% 
+  arrange(-Value) %>% 
+  mutate(Value = log(Value, 10)) %>% 
+  .[1:25, ] -> PathAbundance_RA_Mean25_tbw
+
+PathAbundance_RA_Mean25_tbw %>% 
+  c2r("Variable") -> PathAbundance_RA_Mean25_df
+
+PathAbundance_RA_tbl %>% 
+  group_by(Variable) %>% 
+  inner_join(Mycotype_tbl) %>% 
+  filter(!Variable %in%  c("UNINTEGRATED", "UNMAPPED")) %>% 
+  group_by(Mycotype, Variable) %>% 
+  summarise(Value = mean(Value)) %>% 
+  mutate(Value = log(Value, 10)) %>% 
+  mutate(Mycotype = paste("Mycotype", Mycotype)) %>% 
+  spread(Mycotype, Value) %>% 
+  inner_join(PathAbundance_RA_Mean25_tbw, .) %>% 
+  arrange(-Value) %>% 
+  rename(Overall = Value) %>% 
+  c2r("Variable") -> PathAbundance_RA_Mean25_Mycotype_df
+
+
+future_map(Mycotype_Target, function(i){
+  PathAbundance_RA_tbl %>%
+  filter(!study_id %in% study_id_PathAbundance_Zero) %>%
+  inner_join(Mycotype_tbl) %>%
+  filter(Mycotype %in% c(Mycotype_Reference, i)) %>%
+  filter_mb(0.15) %>%
+  group_by(Variable) %>%
+  rstatix::wilcox_test(Value ~ Mycotype)
+
+  })-> PathAbundance_Wilcox_tbw_list
+
+
+future_map(PathAbundance_Wilcox_tbw_list, # PathAbundance_Wilcox_tbw_list
+           ~ .x %>% 
+             mutate(FDR = qvalue_r(p)) %>% 
+             filter(FDR < 0.05) %>% 
+  arrange(FDR)) %>% 
+  do.call(bind_rows, .) -> PathAbundance_Wilcox_SD_tbw
+
+PathAbundance_Wilcox_SD_tbw %>% 
+  filter(FDR < 0.05) %>% 
+  select(Variable, group2, FDR) %>% 
+  mutate(group2 = paste("Mycotype", group2)) %>% 
+  mutate(FDR = add_sd(FDR)) %>% 
+  spread(group2, FDR) %>% 
+  mutate(`Mycotype C` = NA) %>% 
+  mutate(`Mycotype A` = NA) %>% 
+  mutate(`Overall` = NA) %>% 
+  right_join(PathAbundance_RA_Mean25_tbw) %>% 
+  select(Variable, Overall, `Mycotype A`, `Mycotype B`, `Mycotype C`, `Mycotype D`) %>% 
+  c2r("Variable") -> PathAbundance_Mean25_Wilcox_SD_df
+  
+PathAbundance_Mean25_Wilcox_SD_df[is.na(PathAbundance_Mean25_Wilcox_SD_df)] <- ""
+
+PathAbundance_RA_tbl %>% 
+  rename(Variable_PA = Variable,
+         Value_PA = Value) %>% 
+  inner_join(Clinicalata_Model3_tbw %>% 
+               select(study_id, CPAPintubate, LOS2dys) %>% 
+               gather(Variable_Outcome, Value_Outcome, CPAPintubate, LOS2dys)) %>% 
+  mutate(Value_Outcome = as.numeric(Value_Outcome)) %>% 
+  group_by(Variable_PA, Variable_Outcome) %>% 
+  rstatix::cor_test(Value_PA, Value_Outcome,
+                    method = "spearman") -> PathAbundance_Outcome_Spearman_tbw
+
+PathAbundance_RA_Mean25_Mycotype_df %>% 
+  rownames %>% 
+  data.frame(Variable = .) %>% 
+  mutate(Superclass = case_when(grepl("adenosine|guanosine|pyrimidine", Variable) ~ "Nucleoside and nucleotide",
+                                grepl("gondoate|fatty acid|oleate|palmitoleate|enoate|octanoyl|vaccenate|fatty acid",
+                                      Variable) ~ "Fatty acid and lipid",
+                                grepl("valine|isoleucine|threonine|amino acid", Variable) ~ "Amino acid",
+                                grepl("glycolysis", Variable) ~ "Others",
+                                grepl("pentose", Variable) ~ "Others",
+                                grepl("fermentation", Variable) ~ "Others",
+                                grepl("respiration", Variable) ~ "Others",
+                                )) -> Pathway_Superclass_tbw
+
+PathAbundance_Outcome_Spearman_tbw %>% 
+  group_by(Variable_Outcome) %>% 
+  mutate(FDR = qvalue_r(p)) %>% 
+  filter(Variable_PA %in% rownames(PathAbundance_RA_Mean25_Mycotype_df)) %>% 
+  select(Variable_PA, Variable_Outcome, cor) %>% 
+  spread(Variable_Outcome, cor) %>% 
+  rename(`PPV use` = CPAPintubate,
+         `LOS (≥2 days)` = LOS2dys) %>% 
+  rename(Variable = Variable_PA) %>% 
+  inner_join(Pathway_Superclass_tbw) %>% 
+  c2r("Variable") -> annotation_row_df
+
+PathAbundance_RA_Mean25_Mycotype_df %>% 
+  min-> v
+
+matrix(rep(v, 10),
+          ncol = 5) %>% 
+  as.data.frame-> color_dammy_df
+colnames(color_dammy_df) <- colnames(PathAbundance_RA_Mean25_Mycotype_df)
+rownames(color_dammy_df) <- c("Dammy1", "Dammy2")
+
+matrix(rep("", 10),
+          ncol = 5) %>% 
+  as.data.frame-> number_dammy_df
+colnames(number_dammy_df) <- colnames(PathAbundance_RA_Mean25_Mycotype_df)
+rownames(number_dammy_df) <- c("Dammy1", "Dammy2")
+
+annotation_row_df[, 1:2] %>% 
+  abs %>% 
+  max -> value
+
+data.frame(PPV = c(value, -value),
+          LOS  = c(value, -value),
+           Superclass = c("Others", "Others")) -> row_df
+
+colnames(row_df)[1:2] <- c("PPV use",
+                      "LOS (≥2 days)")
+rownames(row_df) <- c("Dammy1", "Dammy2")
+
+pheatmap::pheatmap(rbind.data.frame(color_dammy_df,
+                             PathAbundance_RA_Mean25_Mycotype_df),
+                   display_numbers = rbind.data.frame(number_dammy_df,
+                                                      PathAbundance_Mean25_Wilcox_SD_df),
+                   annotation_row = rbind.data.frame(row_df,
+                                                     annotation_row_df),
+                    cluster_cols = FALSE,
+                   cluster_rows = FALSE,
+                   gaps_col = c(1, 2),
+                   gaps_row = 2,
+                   fontsize_number = 12,
+                   color = colorRampPalette(c("gray20",
+                                              "white",
+                                               "orangered"))(100),
+                   annotation_colors = list(`PPV use` = colorRampPalette(c("deepskyblue1",
+                                                                           "white",
+                                                                           "hotpink"))(100),
+                                            `LOS (≥2 days)` = colorRampPalette(c("deepskyblue3",
+                                                                           "white",
+                                                                           "hotpink2"))(100)),
+                   file = "Image/Heatmap_Mycotype_PathAbundance.png",
+                   res = 300, width = 8.25, height = 5)
+```
+
+## Host response in the airway
+
+```{R}
+# Table for Ensembl and Symbol
+mapIds(org.Hs.eg.db,
+       keys = Ensembls, 
+       column = "SYMBOL",
+       keytype = "ENSEMBL",
+       multiVals = "first")  %>% 
+  data.frame(Symbol = .) %>% 
+  r2c("Ensembl") -> Ensembl_Symbol_tbw
+```
+
+```{R}
+# mRNA_Mycotype_dds: transcriptome data by DESeq2::DESeqDataSetFromTximport
+
+# DESeq2 #####
+future_map(Mycotype_Target, function(p){
+  mRNA_Mycotype_dds %>%
+    .[, .$Mycotype %in% c(Mycotype_Reference,
+                          p)] -> dds
+  
+  dds$Mycotype %>% 
+    droplevels -> dds$Mycotype
+  
+  dds$Mycotype %>% 
+    relevel(., ref = Mycotype_Reference) -> dds$Mycotype
+  
+  dds %>% DESeq
+}) -> mRNA_Mycotype_deseq_list
+
+names(mRNA_Mycotype_deseq_list) <- Mycotype_Target
+```
+
+```{R}
+# GSEA #####
+## Rank order #####
+purrr::map(mRNA_Mycotype_deseq_list, function(deseq){
+  deseq %>% 
+    results %>% 
+    as.data.frame %>% 
+    r2c("Ensembl") -> deg_tbw
+  
+  mapIds(org.Hs.eg.db,
+         keys = deg_tbw$Ensembl,
+         column = "ENTREZID",
+         keytype = "ENSEMBL",
+         multiVals = "first") %>% 
+    data.frame(ENTREZID = .) %>% 
+    r2c("Ensembl") -> ensembl_entrezid_deg_tbw
+  
+  ensembl_entrezid_deg_tbw   %>% # Extract Symbol
+    inner_join(deg_tbw) %>% # Add the result of DESEq2 
+    filter(!is.na(stat)) %>% # stat
+    group_by(ENTREZID) %>% 
+    summarise(stat = mean(stat)) %>% # stat
+    inner_join(ensembl_entrezid_deg_tbw) %>%
+    distinct(ENTREZID, .keep_all = TRUE) %>%
+    pull(stat, ENTREZID) %>%
+    na.omit %>% 
+    sort(., decreasing = TRUE)
+  }) -> mRNA_Stat_list
+
+names(mRNA_Stat_list) <- Mycotype_Target
+```
+
+```{R}
+## GSEA #####
+purrr::map(mRNA_Stat_list,
+           ~ .x %>% 
+             
+             gseGO(geneList = .,  # Log2FC_Mycotype
+                   ont = "BP", ## CC 
+                   keyType = "ENTREZID", 
+                   # nPerm = 1000, 
+                   #minGSSize = 10, 
+                   #maxGSSize = 100, 
+                   pvalueCutoff = 1, 
+                   verbose = TRUE, 
+                   # nPermSimple = 1000,
+                   OrgDb = org.Hs.eg.db, 
+                   pAdjustMethod = "BH",
+                   seed = 1202)) -> mRNA_Mycotype_GO_gsea_list
+
+purrr::map(mRNA_Stat_list,
+           ~ .x %>%
+             gseKEGG(.,
+                     organism = "hsa",
+                     keyType = "kegg",
+                     exponent = 1,
+                     # nPerm = 1000,
+                     pvalueCutoff = 1,
+                     pAdjustMethod = "BH",
+                     verbose = TRUE,
+                     # se_internal_data = FALSE,
+                     seed = 1202)) -> mRNA_Mycotype_KEGG_gsea_list
+
+mRNA_Mycotype_KEGG_gsea_list -> mRNA_Mycotype_gsea_list
+mRNA_Mycotype_GO_gsea_list -> mRNA_Mycotype_gsea_list 
+
+list(GO = mRNA_Mycotype_GO_gsea_list,
+     KEGG = mRNA_Mycotype_KEGG_gsea_list) -> mRNA_Mycotype_gsea_list
+```
+
+### Volcano plot
+```{R}
+mRNA_Mycotype_deseq_list %>% 
+  imap(., function(deseq, p){
+         deseq %>% 
+         results %>%
+         as.data.frame %>% 
+         r2c("Ensembl")  %>% 
+         mutate(Mycotype = glue("{Mycotype_Reference} vs. {p}")) %>% 
+         inner_join(Ensembl_Symbol_tbw) %>% 
+         filter(!is.na(Symbol)) -> tbl
+       
+       tbl %>% 
+         filter(padj < threshold_p & 
+                           abs(log2FoldChange) > threshold_lfc) %>% 
+         arrange(pvalue) %>% 
+         .[1:10, ] %>% 
+         .$Ensembl -> top10
+       
+       tbl %>% 
+         mutate(Symbol = case_when(Ensembl %in% top10 ~ Symbol))}) %>% 
+  do.call(bind_rows, .) %>% 
+  filter(!is.na(pvalue)) %>% 
+  mutate(Group = if_else(padj < threshold_p & 
+                           abs(log2FoldChange) > threshold_lfc,
+                             glue("p value < {threshold_p}\nand\n|Log2FC| > {threshold_lfc}"),
+                         "NA")) %>% 
+  c2f -> volcano_tbw
+
+volcano_tbw %>% 
+  mutate(Mycotype = fct_recode(Mycotype,
+                               "(a)" = "A vs. B",
+                               "(b)" = "A vs. C",
+                               "(c)" = "A vs. D")) %>% 
+ggplot(., aes(x = log2FoldChange,
+                y = -log(padj, 10),
+                fill = Group))+
+  geom_hline(yintercept = -log(threshold_p, 10),
+             color = "gray",
+             linetype = "dashed")+
+  geom_vline(xintercept = c(threshold_lfc, -threshold_lfc),
+             color = "gray",
+             linetype = "dashed")+
+  geom_point(pch = 21, size = 1.5, aplpha = 0.8) +
+  geom_label_repel(aes(label = Symbol),
+                   position = position_dodge(0.5),
+                   box.padding = 1,
+                   fill = "white",
+                   max.overlaps = Inf,
+                   alpha = 0.8,
+                   size = 3)+
+  guides(fill = FALSE)+
+  labs(y = expression(paste("-log"[10],"-transformed FDR")),
+       x = expression(paste("-log"[2]," fold change")),
+       fill = "")+
+  facet_wrap(~ Mycotype, nrow = 1,
+             scale = "free")+
   theme(axis.title = element_text(size = 14),
         axis.text = element_text(size = 14),
-        strip.text = element_text(size = 14))
-ggsave(glue("{path}/ClusterConsensusPlot_Fusion.png"),
-            dpi = 300, h = 3.25, w = 4)
+        strip.text = element_text(size = 14,
+                                  hjust = -0.025,
+                                  face = "bold"))+
+  scale_fill_manual(values = c("gray", "darkolivegreen2"))+
+  scale_x_continuous(labels = scales::label_number(1))
+```
+
+### GSEA
+```{R}
+GO_Interest_Parenent <- c("GO:0002376") 
+
+map(GO_Interest_Parenent, function(go){
+  GOBPOFFSPRING %>% # show level -1
+    as.list %>% 
+    .[[go]] %>% 
+    as.character 
+  }) %>% 
+  do.call(c, .) -> GO_Interest
+
+read_excel("KEGG_pathway_maps.xlsx") %>% 
+  c2f %>% 
+    filter(Category1 %in% c("Environmental Information Processing",
+                          "Organismal Systems")) %>% 
+  select(ID2, Name) %>% 
+  rename(ID = ID2,
+         Term = Name) -> KEGG_Interest_tbw
+```
+
+```{R}
+future_map(mRNA_Mycotype_gsea_list, function(list){
+  future_map(list, function(tbw){
+    
+  tbw %>% 
+  as.data.frame %>% 
+  r2c("GO") %>% 
+  rename(Term = Description) %>% 
+  mutate(Count = str_count(core_enrichment, "/") + 1) %>%
+  mutate(Hit = Count/setSize) %>%
+  arrange(GO) %>% 
+  select(ID, Term, pvalue, NES, Hit, setSize)
+    })
+  })   -> mRNA_Mycotype_GSEA_tbw_list
+
+future_map(mRNA_Mycotype_GSEA_tbw_list["GO"], function(list){
+  future_map(list, function(tbw){
+    tbw %>% 
+  mutate(FDR = qvalue_r(pvalue)) %>% 
+  select(-pvalue) %>% 
+  filter(FDR < 0.05) %>% 
+  arrange(FDR) %>% 
+      filter(!is.na(Term))
+  })}) -> mRNA_Mycotype_GSEA_GO_SD_tbw_list
+
+purrr::map(mRNA_Mycotype_GSEA_GO_SD_tbw_list[["GO"]], ~ .x %>% 
+             .$Term) -> list
+
+future_map(mRNA_Mycotype_GSEA_tbw_list["KEGG"], function(list){
+  future_map(list, function(tbw){
+    tbw %>% 
+      inner_join(KEGG_Interest_tbw) %>% 
+  mutate(FDR = qvalue_r(pvalue)) %>% 
+  select(-pvalue) %>% 
+  filter(FDR < 0.05) %>% 
+  arrange(FDR) %>% 
+      filter(!is.na(Term))
+  })}) -> mRNA_Mycotype_GSEA_KEGG_SD_tbw_list
+
+list(GO = mRNA_Mycotype_GSEA_GO_SD_tbw_list[["GO"]] %>% 
+       map(., ~ .x %>% 
+             .[1:250, ] %>% 
+             filter(!is.na(Term))),
+     KEGG = mRNA_Mycotype_GSEA_KEGG_SD_tbw_list[["KEGG"]] %>% 
+       map(., ~ filter(.x, !grepl("hsa05", ID)))) -> mRNA_Mycotype_GSEA_SD_tbw_list
+```
+
+
+````{R}
+future_map(mRNA_Mycotype_GSEA_SD_tbw_list, function(list){
+  future_imap(list, function(tbw, i){
+  
+  tbw %>% 
+  mutate(FDR = log(FDR, 10)) %>% 
+  # filter(!Term %in% Pathway_Mycotype13) %>% 
+  arrange(FDR) %>% 
+  mutate(Mycotype = glue::glue("Mycotype {i}"))}) %>% 
+  do.call(bind_rows, .) %>% 
+  as_tibble %>% 
+  c2f }) -> mRNA_Mycotype_GSEA_Point_tbw_list
+
+mRNA_Mycotype_GSEA_Point_tbw_list[["GO"]] %>% 
+  mutate(Term = paste("<span style = 'color: ",
+                         if_else(grepl("vir|symbiont|interferon|interleu", Term), "purple4",
+                         if_else(grepl("ntigen |receptor|surface|somatic|response-activating", Term), "green4",
+                         if_else(grepl("neutrophil|myeloid|mononuclear|granulocyte", Term),
+                                 "deeppink3",
+                         if_else(grepl("B cell|T cell|lympho|helper", Term), "darkorange4", 
+                                 "gray18")))), # antimicrobial
+                         ";'>",
+                         Term,
+                         "</span>", sep = "")) %>% 
+  mutate(Term = gsub("negative regulation of adaptive immune response based on somatic recombination of immune receptors built from immunoglobulin superfamily domains",
+                     "GO:0002460", Term)) -> go_tbw
+
+mRNA_Mycotype_GSEA_Point_tbw_list[["KEGG"]] %>% 
+  mutate(Term = paste("<span style = 'color: ",
+                         if_else(grepl("JAK|RIG|MAPK|mTOR|NOD", Term),
+                                 "purple4",
+                         if_else(grepl("Th1|Th2|Th17|Natural killer", Term),
+                                 "darkorange4",
+                         if_else(grepl("Chemokine", Term),
+                                 "deeppink3",
+                         if_else(grepl("ntigen|receptor signaling|phagocyto", Term),
+                                 "green4", "gray18")))), #   antimicrobial
+                         ";'>",
+                         Term,
+                         "</span>", sep = "")) -> kegg_tbw
+  
+list(GO = go_tbw,
+     KEGG = kegg_tbw) %>% 
+  future_map(., function(tbw){
+    
+    tbw %>% 
+  mutate(Term = tidytext::reorder_within(Term,
+                                          -FDR,
+                                          Mycotype,
+                                          .desc = TRUE)) 
+  }) -> mRNA_Mycotype_GSEA_Point_Setting_tbw_list
+```
+
+```{R}
+list(GO = "Gene Ontology terms (Biological Processes)",
+     KEGG = "KEGG pathway") -> Database_list
+
+future_map2(mRNA_Mycotype_GSEA_Point_Setting_tbw_list,
+            Database_list,
+            function(tbw, db){
+              
+              tbw %>% 
+                .$NES %>% 
+                abs %>% 
+                max -> nes_max
+  
+  ggplot(tbw %>% mutate(Dammy = 1),
+       aes(x = -FDR,
+           y = Term, 
+           size = Hit *100,
+           color = NES)) +
+  geom_point()+
+  scale_color_gradientn(colours = c("navy",
+                                 "white",
+                                 "firebrick3"),
+                        space = "Lab",
+                        na.value = "#C6DBEF",
+                        limits = c(-nes_max, nes_max),
+                        guide = guide_colorbar(reverse = F))+
+  labs(x = expression(paste("-log"[10],"-transformed FDR")),
+       y = db,
+       colour = "Normalized\nenrichment\nscore",
+       size = "Percentage\nof\nhit genes")+
+  theme(strip.text.x = element_blank(),
+        axis.text.y = ggtext::element_markdown(size = 15),
+        strip.text.y = element_text(size = 15),
+        axis.text.x = element_text(size = 15),
+        axis.title = element_text(size = 15),
+        legend.key.size = unit(1, 'cm'),
+        legend.text = element_text(size = 15),
+        legend.title = element_text(size = 15),
+        panel.spacing = unit(2, "lines"))+
+  expand_limits(x = 2,
+                size = c(1, 100)) +
+  scale_x_continuous(labels = scales::label_number(0.1))+
+  upstartr::scale_y_reordered() +
+  scale_size_continuous(range = c(0.25, 7), #change the size scale 
+                        breaks = c (20, 100),
+                        labels = c("20", "100"))+
+  upstartr::scale_y_reordered() +
+  facet_grid(Mycotype ~ Dammy,
+             scale = "free",
+             space = "free")
+  })
+```
+
+# Sensitivity analysis
+## Log-F-penalized logistic regression analyses
+```{R}
+future_imap(Formula_list, function(formula, model){
+  Clinicaldata_Model_tbw %>% 
+  mutate(CPAPintubate = as.numeric(as.character(CPAPintubate))) %>% 
+  as.data.frame -> clinicaldata_df
+  
+  logistlogF::logistlogF(formula,
+                       dat = clinicaldata_df,
+                       m = 1,
+                       control = glm.control()) -> fit
+  
+  broom.mixed::tidy(fit,
+                      conf.int = TRUE,
+                      exponentiate = TRUE) %>% 
+  mutate(Model = model) %>% 
+  filter(grepl("Mycotype", term)) -> fit_tbw
+  
+  future_map(fit_tbw$term, function(i){
+    fit_tbw %>% 
+      filter(term == i) -> fit_i_term
+    
+    EValue::evalues.RR(fit_i_term$estimate, # when event is rare, we can use RR instead of OR
+                     lo = fit_i_term$conf.low,
+                     hi = fit_i_term$conf.high,
+                     true = 1) %>% 
+    as.data.frame -> evalue_df
+    
+    evalue_df[is.na(evalue_df)] <- ""
+    
+    "%.2f" -> digits
+    
+    evalue_df %>% 
+      r2c("Variable") %>% 
+      filter(Variable == "E-values") %>% 
+      mutate_if(is.numeric, funs(sprintf(digits, .))) %>% 
+      mutate(`E-value` = glue("{point} ({lower}{upper})")) %>% 
+      .$`E-value` -> evalue
+    
+    fit_i_term %>% 
+      mutate(`Odds ratio\n(95% CI)` =
+               glue("{sprintf(digits, estimate)} ({sprintf(digits, conf.low)}–{sprintf(digits, conf.high)})")) %>% 
+      mutate(`E-value` = if_else(p.value < 0.05, evalue, "-"))
+    }) %>% 
+    do.call(bind_rows, .)
+}) %>% 
+    do.call(bind_rows, .) %>% 
+  mutate(term = gsub("Mycotype", "Mycotype ", term))
+```
+
+## Modified Poisson regression
+
+```{R}
+future_imap(Formula_list, function(formula, model){
+  Clinicaldata_Model_tbw %>% 
+     mutate(CPAPintubate = as.numeric(as.character(CPAPintubate))) -> clinicaldata_tbw
+ 
+  glm(formula,
+      data    = clinicaldata_tbw,
+      family  = poisson(link = "log"))  -> fit
+  
+  lmtest::coeftest(fit,
+           vcov = sandwich) %>%
+  broom::tidy(.) %>% 
+  mutate(conf.low = estimate - 1.96 * std.error,
+         conf.high = estimate + 1.96 * std.error) %>% 
+    mutate(estimate = exp(estimate),
+           conf.low = exp(conf.low),
+           conf.high = exp(conf.high)) %>% 
+    select(term, estimate, conf.low, conf.high, p.value) %>% 
+  mutate(Model = model) %>% 
+  filter(grepl("Mycotype", term)) -> fit_tbw
+  
+  future_map(fit_tbw$term, function(i){
+    fit_tbw %>% 
+      filter(term == i) -> fit_i_term
+    
+    EValue::evalues.RR(fit_i_term$estimate, # when event is rare, we can use RR instead of OR
+                     lo = fit_i_term$conf.low,
+                     hi = fit_i_term$conf.high,
+                     true = 1) %>% 
+    as.data.frame -> evalue_df
+    
+    evalue_df[is.na(evalue_df)] <- ""
+    
+    "%.2f" -> digits
+    
+    evalue_df %>% 
+      r2c("Variable") %>% 
+      filter(Variable == "E-values") %>% 
+      mutate_if(is.numeric, funs(sprintf(digits, .))) %>% 
+      mutate(`E-value` = glue("{point} ({lower}{upper})")) %>% 
+      .$`E-value` -> evalue
+    
+    fit_i_term %>% 
+      mutate(`Odds ratio\n(95% CI)` =
+               glue("{sprintf(digits, estimate)} ({sprintf(digits, conf.low)}–{sprintf(digits, conf.high)})")) %>% 
+      mutate(`E-value` = if_else(p.value < 0.05, evalue, "-"))
+    }) %>% 
+    do.call(bind_rows, .)
+}) %>% 
+    do.call(bind_rows, .) %>% 
+  mutate(term = gsub("Mycotype", "Mycotype ", term))
 ```
